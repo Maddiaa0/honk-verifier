@@ -7,3 +7,7 @@
 [submodule "lib/openzeppelin-contracts"]
 	path = lib/openzeppelin-contracts
 	url = https://github.com/OpenZeppelin/openzeppelin-contracts
+[submodule "barretenberg"]
+	path = barretenberg
+	url = https://github.com/aztecprotocol/aztec-packages
+	branch = md/02-26-feat_honk_verifier_start

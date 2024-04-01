@@ -54,7 +54,7 @@ library TranscriptLib {
     {
         // TODO(md): the 12 here will need to be halved when we fix the transcript to not be over field elements
         // TODO: use assembly
-        bytes32[3 + 3 + 12] memory round0;
+        bytes32[3 + NUMBER_OF_PUBLIC_INPUTS + 12] memory round0;
         round0[0] = bytes32(proof.circuitSize);
         round0[1] = bytes32(proof.publicInputsSize);
         round0[2] = bytes32(proof.publicInputsOffset);
