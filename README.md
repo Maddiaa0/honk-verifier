@@ -1,66 +1,41 @@
-## Foundry
+<img align="right" width="150" height="150" top="100" src="./public/honk.webp">
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+## EVM Honk Verifier
 
-Foundry consists of:
+**An EVM verifier for the HONK (sumcheck + zeromorph) proving system.**
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+This repo consists of:
 
-## Documentation
+- A differential fuzzer against a cpp implementation (found in barretenberg)
+- A verifier for an ECDSA circuit
 
-https://book.getfoundry.sh/
+## Upcoming
+
+- Optimized assembly implementation
+
+## Building
+1. **C++**
+On ubuntu make sure you have a cpp toolchain installed -> 
+```
+sudo apt-get install cmake clang clang-format ninja-build libstdc++-12-dev
+```
+We will be building with clang16 - so make sure you have that compiler :)
+
+2. **Foundry**
+See installation instructions here: https://book.getfoundry.sh/
+
 
 ## Usage
 
 ### Build
 
 ```shell
-$ forge build
+$ ./bootstrap.sh # This will download the SRS and build the C++
+$ forge build # Build the contracts
 ```
 
 ### Test
 
 ```shell
 $ forge test
-```
-
-### Format
-
-```shell
-$ forge fmt
-```
-
-### Gas Snapshots
-
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
 ```
