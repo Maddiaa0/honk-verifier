@@ -3,7 +3,8 @@
 echo "Downloading srs..."
 (cd ./barretenberg/barretenberg/cpp/srs_db && ./download_ignition.sh 3)
 (cd ./barretenberg/barretenberg/cpp && cmake --preset clang16)
-(cd ./barretenberg/barretenberg/cpp && cmake --preset clang16)
 (cd ./barretenberg/barretenberg/cpp && cmake --build --preset clang16 --target honk_solidity_proof_gen)
 
-
+echo "Building w/ forge..."
+forge build
+echo "Done building: test with "forge test""
