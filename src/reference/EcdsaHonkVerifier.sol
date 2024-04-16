@@ -60,14 +60,14 @@ contract EcdsaHonkVerifier is IVerifier {
         return sumcheckVerified && zeromorphVerified; // Boolean condition not required - nice for vanity :)
     }
 
-    function loadVerificationKey() internal view returns (Honk.VerificationKey memory) {
+    function loadVerificationKey() internal pure returns (Honk.VerificationKey memory) {
         return VK.loadVerificationKey();
     }
 
     // TODO: mod q proof points
     // TODO: Preprocess all of the memory locations
     // TODO: Adjust proof point serde away from poseidon forced field elements
-    function loadProof(bytes calldata proof) internal view returns (Honk.Proof memory) {
+    function loadProof(bytes calldata proof) internal pure returns (Honk.Proof memory) {
         Honk.Proof memory p;
 
         // Metadata
@@ -224,7 +224,7 @@ contract EcdsaHonkVerifier is IVerifier {
     // Incorportate the original plookup construction into honk
     function computeLookupGrandProductDelta(Fr beta, Fr gamma, uint256 domainSize)
         internal
-        view
+        pure
         returns (Fr lookupGrandProductDelta)
     {
         Fr gammaByOnePlusBeta = gamma * (beta + Fr.wrap(1));
@@ -242,6 +242,7 @@ contract EcdsaHonkVerifier is IVerifier {
         for (uint256 round; round < LOG_N; ++round) {
             Fr[BATCHED_RELATION_PARTIAL_LENGTH] memory roundUnivariate = proof.sumcheckUnivariates[round];
             bool valid = checkSum(roundUnivariate, roundTarget);
+            if (!valid) revert SumcheckFailed();
 
             Fr roundChallenge = tp.sumCheckUChallenges[round];
 
@@ -257,11 +258,11 @@ contract EcdsaHonkVerifier is IVerifier {
 
     function checkSum(Fr[BATCHED_RELATION_PARTIAL_LENGTH] memory roundUnivariate, Fr roundTarget)
         internal
-        view
+        pure
         returns (bool checked)
     {
         Fr totalSum = roundUnivariate[0] + roundUnivariate[1];
-        checked = totalSum != roundTarget;
+        checked = totalSum == roundTarget;
     }
 
     // Return the new target sum for the next sumcheck round
@@ -315,7 +316,7 @@ contract EcdsaHonkVerifier is IVerifier {
     // Univariate evaluation of the monomial ((1-X_l) + X_l.B_l) at the challenge point X_l=u_l
     function partiallyEvaluatePOW(Transcript memory tp, Fr currentEvaluation, Fr roundChallenge, uint256 round)
         internal
-        view
+        pure
         returns (Fr newEvaluation)
     {
         Fr univariateEval = Fr.wrap(1) + (roundChallenge * (tp.gateChallenges[round] - Fr.wrap(1)));
@@ -401,7 +402,7 @@ contract EcdsaHonkVerifier is IVerifier {
         Transcript memory tp,
         Fr[NUMBER_OF_SUBRELATIONS] memory evals,
         Fr domainSep
-    ) internal view {
+    ) internal pure {
         Fr grand_product_numerator;
         Fr grand_product_denominator;
 
@@ -458,7 +459,7 @@ contract EcdsaHonkVerifier is IVerifier {
         Transcript memory tp,
         Fr[NUMBER_OF_SUBRELATIONS] memory evals,
         Fr domainSep
-    ) internal view {
+    ) internal pure {
         Fr grand_product_numerator;
         Fr grand_product_denominator;
 
@@ -533,7 +534,7 @@ contract EcdsaHonkVerifier is IVerifier {
         Fr[NUMBER_OF_ENTITIES] memory p,
         Fr[NUMBER_OF_SUBRELATIONS] memory evals,
         Fr domainSep
-    ) internal view {
+    ) internal pure {
         Fr minus_one = Fr.wrap(0) - Fr.wrap(1);
         Fr minus_two = Fr.wrap(0) - Fr.wrap(2);
         Fr minus_three = Fr.wrap(0) - Fr.wrap(3);
@@ -605,7 +606,7 @@ contract EcdsaHonkVerifier is IVerifier {
         Fr[NUMBER_OF_ENTITIES] memory p,
         Fr[NUMBER_OF_SUBRELATIONS] memory evals,
         Fr domainSep
-    ) internal view {
+    ) internal pure {
         EllipticParams memory ep;
         ep.x_1 = wire(p, WIRE.W_R);
         ep.y_1 = wire(p, WIRE.W_O);
@@ -941,7 +942,7 @@ contract EcdsaHonkVerifier is IVerifier {
     function scaleAndBatchSubrelations(
         Fr[NUMBER_OF_SUBRELATIONS] memory evaluations,
         Fr[NUMBER_OF_ALPHAS] memory subrelationChallenges
-    ) internal view returns (Fr accumulator) {
+    ) internal pure returns (Fr accumulator) {
         accumulator = accumulator + evaluations[0];
 
         for (uint256 i = 1; i < NUMBER_OF_SUBRELATIONS; ++i) {
@@ -1251,7 +1252,7 @@ contract EcdsaHonkVerifier is IVerifier {
         );
 
         (bool success, bytes memory result) = address(0x08).staticcall(input);
-        return abi.decode(result, (bool));
+        return (abi.decode(result, (bool)) && success);
     }
 }
 
