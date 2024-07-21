@@ -12,6 +12,7 @@ import {
     NUMBER_OF_SUBRELATIONS,
     NUMBER_OF_ALPHAS,
     BATCHED_RELATION_PARTIAL_LENGTH,
+    CONST_PROOF_SIZE_LOG_N,
     P,
     Q
 } from "./HonkTypes.sol";
@@ -31,12 +32,11 @@ error ZeromorphFailed();
 contract EcdsaHonkVerifier is IVerifier {
     Fr internal constant GRUMPKIN_CURVE_B_PARAMETER_NEGATED = Fr.wrap(17); // -(-17)
 
-    // TODO(md): I would perfer the publicInputs to be uint256
     function verify(bytes calldata proof, bytes32[] calldata publicInputs) public view override returns (bool) {
         Honk.VerificationKey memory vk = loadVerificationKey();
         Honk.Proof memory p = loadProof(proof);
 
-        if (vk.publicInputsSize != publicInputs.length) {
+        if (vk.publicInputsSize != NUMBER_OF_PUBLIC_INPUTS) {
             revert PublicInputsLengthWrong();
         }
 
@@ -46,8 +46,6 @@ contract EcdsaHonkVerifier is IVerifier {
         // Compute the public input delta
         t.publicInputsDelta =
             computePublicInputDelta(publicInputs, t.beta, t.gamma, vk.circuitSize, p.publicInputsOffset);
-
-        t.lookupGrandProductDelta = computeLookupGrandProductDelta(t.beta, t.gamma, vk.circuitSize);
 
         // Sumcheck
         bool sumcheckVerified = verifySumcheck(p, t);
@@ -60,14 +58,14 @@ contract EcdsaHonkVerifier is IVerifier {
         return sumcheckVerified && zeromorphVerified; // Boolean condition not required - nice for vanity :)
     }
 
-    function loadVerificationKey() internal pure returns (Honk.VerificationKey memory) {
+    function loadVerificationKey() internal view returns (Honk.VerificationKey memory) {
         return VK.loadVerificationKey();
     }
 
     // TODO: mod q proof points
     // TODO: Preprocess all of the memory locations
     // TODO: Adjust proof point serde away from poseidon forced field elements
-    function loadProof(bytes calldata proof) internal pure returns (Honk.Proof memory) {
+    function loadProof(bytes calldata proof) internal view returns (Honk.Proof memory) {
         Honk.Proof memory p;
 
         // Metadata
@@ -97,40 +95,44 @@ contract EcdsaHonkVerifier is IVerifier {
         });
 
         // Lookup / Permutation Helper Commitments
-        p.sortedAccum = Honk.G1ProofPoint({
+        p.lookupReadCounts = Honk.G1ProofPoint({
             x_0: uint256(bytes32(proof[0x1e0:0x200])),
             x_1: uint256(bytes32(proof[0x200:0x220])),
             y_0: uint256(bytes32(proof[0x220:0x240])),
             y_1: uint256(bytes32(proof[0x240:0x260]))
         });
-        p.w4 = Honk.G1ProofPoint({
+        p.lookupReadTags = Honk.G1ProofPoint({
             x_0: uint256(bytes32(proof[0x260:0x280])),
             x_1: uint256(bytes32(proof[0x280:0x2a0])),
             y_0: uint256(bytes32(proof[0x2a0:0x2c0])),
             y_1: uint256(bytes32(proof[0x2c0:0x2e0]))
         });
-
-        p.zPerm = Honk.G1ProofPoint({
+        p.w4 = Honk.G1ProofPoint({
             x_0: uint256(bytes32(proof[0x2e0:0x300])),
             x_1: uint256(bytes32(proof[0x300:0x320])),
             y_0: uint256(bytes32(proof[0x320:0x340])),
             y_1: uint256(bytes32(proof[0x340:0x360]))
         });
-
-        p.zLookup = Honk.G1ProofPoint({
+        p.lookupInverses = Honk.G1ProofPoint({
             x_0: uint256(bytes32(proof[0x360:0x380])),
             x_1: uint256(bytes32(proof[0x380:0x3a0])),
             y_0: uint256(bytes32(proof[0x3a0:0x3c0])),
             y_1: uint256(bytes32(proof[0x3c0:0x3e0]))
         });
+        p.zPerm = Honk.G1ProofPoint({
+            x_0: uint256(bytes32(proof[0x3e0:0x400])),
+            x_1: uint256(bytes32(proof[0x400:0x420])),
+            y_0: uint256(bytes32(proof[0x420:0x440])),
+            y_1: uint256(bytes32(proof[0x440:0x460]))
+        });
 
         // TEMP the boundary of what has already been read
-        uint256 boundary = 0x3e0;
+        uint256 boundary = 0x460;
 
         // Sumcheck univariates
         // TODO: in this case we know what log_n is - so we hard code it, we would want this to be included in
         // a cpp template for different circuit sizes
-        for (uint256 i = 0; i < LOG_N; i++) {
+        for (uint256 i = 0; i < CONST_PROOF_SIZE_LOG_N; i++) {
             // The loop boundary of i, this will shift forward on each evaluation
             uint256 loop_boundary = boundary + (i * 0x20 * BATCHED_RELATION_PARTIAL_LENGTH);
 
@@ -141,7 +143,7 @@ contract EcdsaHonkVerifier is IVerifier {
             }
         }
 
-        boundary = boundary + (LOG_N * BATCHED_RELATION_PARTIAL_LENGTH * 0x20);
+        boundary = boundary + (CONST_PROOF_SIZE_LOG_N * BATCHED_RELATION_PARTIAL_LENGTH * 0x20);
         // Sumcheck evaluations
         for (uint256 i = 0; i < NUMBER_OF_ENTITIES; i++) {
             uint256 start = boundary + (i * 0x20);
@@ -151,7 +153,7 @@ contract EcdsaHonkVerifier is IVerifier {
 
         boundary = boundary + (NUMBER_OF_ENTITIES * 0x20);
         // Zero morph Commitments
-        for (uint256 i = 0; i < LOG_N; i++) {
+        for (uint256 i = 0; i < CONST_PROOF_SIZE_LOG_N; i++) {
             // Explicitly stating the x0, x1, y0, y1 start and end boundaries to make the calldata slicing bearable
             uint256 xStart = boundary + (i * 0x80);
             uint256 xEnd = xStart + 0x20;
@@ -173,7 +175,7 @@ contract EcdsaHonkVerifier is IVerifier {
             });
         }
 
-        boundary = boundary + (LOG_N * 0x80);
+        boundary = boundary + (CONST_PROOF_SIZE_LOG_N * 0x80);
 
         p.zmCq = Honk.G1ProofPoint({
             x_0: uint256(bytes32(proof[boundary:boundary + 0x20])),
@@ -206,7 +208,7 @@ contract EcdsaHonkVerifier is IVerifier {
         Fr denominatorAcc = gamma - (beta * FrLib.from(offset + 1));
 
         {
-            for (uint256 i = 0; i < publicInputs.length; i++) {
+            for (uint256 i = 0; i < NUMBER_OF_PUBLIC_INPUTS; i++) {
                 Fr pubInput = FrLib.fromBytes32(publicInputs[i]);
 
                 numerator = numerator * (numeratorAcc + pubInput);
@@ -219,17 +221,6 @@ contract EcdsaHonkVerifier is IVerifier {
 
         // Fr delta = numerator / denominator; // TOOO: batch invert later?
         publicInputDelta = FrLib.div(numerator, denominator);
-    }
-
-    // Incorportate the original plookup construction into honk
-    function computeLookupGrandProductDelta(Fr beta, Fr gamma, uint256 domainSize)
-        internal
-        pure
-        returns (Fr lookupGrandProductDelta)
-    {
-        Fr gammaByOnePlusBeta = gamma * (beta + Fr.wrap(1));
-        // TODO: dont like using ^ for exponent - might just make a function
-        lookupGrandProductDelta = gammaByOnePlusBeta ^ Fr.wrap(domainSize);
     }
 
     uint256 constant ROUND_TARGET = 0;
@@ -253,12 +244,12 @@ contract EcdsaHonkVerifier is IVerifier {
 
         // Last round
         Fr grandHonkRelationSum = accumulateRelationEvaluations(proof, tp, powPartialEvaluation);
-        verified = grandHonkRelationSum == roundTarget;
+        verified = (grandHonkRelationSum == roundTarget);
     }
 
     function checkSum(Fr[BATCHED_RELATION_PARTIAL_LENGTH] memory roundUnivariate, Fr roundTarget)
         internal
-        pure
+        view
         returns (bool checked)
     {
         Fr totalSum = roundUnivariate[0] + roundUnivariate[1];
@@ -316,7 +307,7 @@ contract EcdsaHonkVerifier is IVerifier {
     // Univariate evaluation of the monomial ((1-X_l) + X_l.B_l) at the challenge point X_l=u_l
     function partiallyEvaluatePOW(Transcript memory tp, Fr currentEvaluation, Fr roundChallenge, uint256 round)
         internal
-        pure
+        view
         returns (Fr newEvaluation)
     {
         Fr univariateEval = Fr.wrap(1) + (roundChallenge * (tp.gateChallenges[round] - Fr.wrap(1)));
@@ -339,11 +330,10 @@ contract EcdsaHonkVerifier is IVerifier {
         Fr[NUMBER_OF_SUBRELATIONS] memory evaluations;
 
         // Accumulate all 6 custom gates - each with varying number of subrelations
-        // TODO: annotate how many subrealtions each has
         accumulateArithmeticRelation(purportedEvaluations, evaluations, powPartialEval);
         accumulatePermutationRelation(purportedEvaluations, tp, evaluations, powPartialEval);
-        accumulateLookupRelation(purportedEvaluations, tp, evaluations, powPartialEval);
-        accumulateGenPermRelation(purportedEvaluations, evaluations, powPartialEval);
+        accumulateLogDerivativeLookupRelation(purportedEvaluations, tp, evaluations, powPartialEval);
+        accumulateDeltaRangeRelation(purportedEvaluations, evaluations, powPartialEval);
         accumulateEllipticRelation(purportedEvaluations, evaluations, powPartialEval);
         accumulateAuxillaryRelation(purportedEvaluations, tp, evaluations, powPartialEval);
 
@@ -370,7 +360,7 @@ contract EcdsaHonkVerifier is IVerifier {
     function accumulateArithmeticRelation(
         Fr[NUMBER_OF_ENTITIES] memory p,
         Fr[NUMBER_OF_SUBRELATIONS] memory evals,
-        Fr powPartialEval
+        Fr domainSep
     ) internal view {
         // Relation 0
         Fr q_arith = wire(p, WIRE.Q_ARITH);
@@ -382,7 +372,7 @@ contract EcdsaHonkVerifier is IVerifier {
                 + (wire(p, WIRE.Q_O) * wire(p, WIRE.W_O)) + (wire(p, WIRE.Q_4) * wire(p, WIRE.W_4)) + wire(p, WIRE.Q_C);
             accum = accum + (q_arith - Fr.wrap(1)) * wire(p, WIRE.W_4_SHIFT);
             accum = accum * q_arith;
-            accum = accum * powPartialEval;
+            accum = accum * domainSep;
             evals[0] = accum;
         }
 
@@ -392,7 +382,7 @@ contract EcdsaHonkVerifier is IVerifier {
             accum = accum * (q_arith - Fr.wrap(2));
             accum = accum * (q_arith - Fr.wrap(1));
             accum = accum * q_arith;
-            accum = accum * powPartialEval;
+            accum = accum * domainSep;
             evals[1] = accum;
         }
     }
@@ -402,7 +392,7 @@ contract EcdsaHonkVerifier is IVerifier {
         Transcript memory tp,
         Fr[NUMBER_OF_SUBRELATIONS] memory evals,
         Fr domainSep
-    ) internal pure {
+    ) internal view {
         Fr grand_product_numerator;
         Fr grand_product_denominator;
 
@@ -443,98 +433,53 @@ contract EcdsaHonkVerifier is IVerifier {
         }
     }
 
-    // Lookup parameters have been yoinked into memory to avoid stack too deep
-    struct LookupParams {
-        Fr eta_sqr;
-        Fr eta_cube;
-        Fr one_plus_beta;
-        Fr gamma_by_one_plus_beta;
-        Fr wire_accum;
-        Fr table_accum;
-        Fr table_accum_shift;
-    }
-
-    function accumulateLookupRelation(
+    function accumulateLogDerivativeLookupRelation(
         Fr[NUMBER_OF_ENTITIES] memory p,
         Transcript memory tp,
         Fr[NUMBER_OF_SUBRELATIONS] memory evals,
         Fr domainSep
-    ) internal pure {
-        Fr grand_product_numerator;
-        Fr grand_product_denominator;
+    ) internal view {
+        Fr write_term;
+        Fr read_term;
 
-        LookupParams memory lp;
+        // Calculate the write term (the table accumulation)
         {
-            // TODO: note, eta square and eta cubed domain seperators will be replaced with further challenges in the future to reduce the
-            // algebraic degree of the lookup relations
-            lp.eta_sqr = tp.eta * tp.eta;
-            lp.eta_cube = lp.eta_sqr * tp.eta;
-            lp.one_plus_beta = tp.beta + Fr.wrap(1);
-            lp.gamma_by_one_plus_beta = tp.gamma * lp.one_plus_beta;
+            write_term = wire(p, WIRE.TABLE_1) + tp.gamma + (wire(p, WIRE.TABLE_2) * tp.eta)
+                + (wire(p, WIRE.TABLE_3) * tp.etaTwo) + (wire(p, WIRE.TABLE_4) * tp.etaThree);
         }
 
+        // Calculate the write term
         {
-            {
-                // (wire(p,WIRE.W_L)] + q_2*wire(p,WIRE.W_1_SHIFT)]) + η(wire(p,WIRE.W_R)] + q_m*wire(p,WIRE.W_2_SHIFT)]) + η²(wire(p,WIRE.W_O)] + q_c*wire(p,WIRE.W_3_SHIFT)]) + η³q_index.
-                // deg 2 or 4
-                Fr wire_accum = (wire(p, WIRE.W_L) + wire(p, WIRE.Q_R) * wire(p, WIRE.W_L_SHIFT));
-                wire_accum = wire_accum + (wire(p, WIRE.W_R) + wire(p, WIRE.Q_M) * wire(p, WIRE.W_R_SHIFT)) * tp.eta;
-                wire_accum = wire_accum + (wire(p, WIRE.W_O) + wire(p, WIRE.Q_C) * wire(p, WIRE.W_O_SHIFT)) * lp.eta_sqr;
-                wire_accum = wire_accum + wire(p, WIRE.Q_O) * lp.eta_cube;
-                lp.wire_accum = wire_accum;
-            }
+            Fr derived_entry_1 = wire(p, WIRE.W_L) + tp.gamma + (wire(p, WIRE.Q_R) * wire(p, WIRE.W_L_SHIFT));
+            Fr derived_entry_2 = wire(p, WIRE.W_R) + wire(p, WIRE.Q_M) * wire(p, WIRE.W_R_SHIFT);
+            Fr derived_entry_3 = wire(p, WIRE.W_O) + wire(p, WIRE.Q_C) * wire(p, WIRE.W_O_SHIFT);
 
-            // t_1 + ηt_2 + η²t_3 + η³t_4
-            // deg 1 or 4
-            {
-                Fr table_accum = wire(p, WIRE.TABLE_1) + wire(p, WIRE.TABLE_2) * tp.eta;
-                table_accum = table_accum + wire(p, WIRE.TABLE_3) * lp.eta_sqr;
-                table_accum = table_accum + wire(p, WIRE.TABLE_4) * lp.eta_cube;
-
-                lp.table_accum = table_accum;
-            }
-
-            // t_1_shift + ηt_2_shift + η²t_3_shift + η³t_4_shift
-            // deg 4
-            {
-                lp.table_accum_shift = wire(p, WIRE.TABLE_1_SHIFT) + wire(p, WIRE.TABLE_2_SHIFT) * tp.eta
-                    + wire(p, WIRE.TABLE_3_SHIFT) * lp.eta_sqr + wire(p, WIRE.TABLE_4_SHIFT) * lp.eta_cube;
-            }
-
-            {
-                Fr acc = (wire(p, WIRE.Q_LOOKUP) * lp.wire_accum + tp.gamma);
-                acc = acc * (lp.table_accum + lp.table_accum_shift * tp.beta + lp.gamma_by_one_plus_beta);
-                acc = acc * lp.one_plus_beta;
-                grand_product_numerator = acc;
-            }
-        }
-        {
-            Fr acc =
-                (wire(p, WIRE.SORTED_ACCUM) + wire(p, WIRE.SORTED_ACCUM_SHIFT) * tp.beta + lp.gamma_by_one_plus_beta);
-            grand_product_denominator = acc;
+            read_term = derived_entry_1 + (derived_entry_2 * tp.eta) + (derived_entry_3 * tp.etaTwo)
+                + (wire(p, WIRE.Q_O) * tp.etaThree);
         }
 
-        // Contribution 4
-        {
-            Fr acc = grand_product_numerator * (wire(p, WIRE.Z_LOOKUP) + wire(p, WIRE.LAGRANGE_FIRST))
-                - grand_product_denominator
-                    * (wire(p, WIRE.Z_LOOKUP_SHIFT) + wire(p, WIRE.LAGRANGE_LAST) * tp.lookupGrandProductDelta);
-            acc = acc * domainSep;
-            evals[4] = acc;
-        }
+        Fr read_inverse = wire(p, WIRE.LOOKUP_INVERSES) * write_term;
+        Fr write_inverse = wire(p, WIRE.LOOKUP_INVERSES) * read_term;
 
-        // Contribution 5
-        {
-            Fr acc = wire(p, WIRE.LAGRANGE_LAST) * wire(p, WIRE.Z_LOOKUP_SHIFT) * domainSep;
-            evals[5] = acc;
-        }
+        Fr inverse_exists_xor = wire(p, WIRE.LOOKUP_READ_TAGS) + wire(p, WIRE.Q_LOOKUP)
+            - (wire(p, WIRE.LOOKUP_READ_TAGS) * wire(p, WIRE.Q_LOOKUP));
+
+        // Inverse calculated correctly relation
+        Fr accumulatorNone = read_term * write_term * wire(p, WIRE.LOOKUP_INVERSES) - inverse_exists_xor;
+        accumulatorNone = accumulatorNone * domainSep;
+
+        // Inverse
+        Fr accumulatorOne = wire(p, WIRE.Q_LOOKUP) * read_inverse - wire(p, WIRE.LOOKUP_READ_COUNTS) * write_inverse;
+
+        evals[4] = accumulatorNone;
+        evals[5] = accumulatorOne;
     }
 
-    function accumulateGenPermRelation(
+    function accumulateDeltaRangeRelation(
         Fr[NUMBER_OF_ENTITIES] memory p,
         Fr[NUMBER_OF_SUBRELATIONS] memory evals,
         Fr domainSep
-    ) internal pure {
+    ) internal view {
         Fr minus_one = Fr.wrap(0) - Fr.wrap(1);
         Fr minus_two = Fr.wrap(0) - Fr.wrap(2);
         Fr minus_three = Fr.wrap(0) - Fr.wrap(3);
@@ -551,7 +496,7 @@ contract EcdsaHonkVerifier is IVerifier {
             acc = acc * (delta_1 + minus_one);
             acc = acc * (delta_1 + minus_two);
             acc = acc * (delta_1 + minus_three);
-            acc = acc * wire(p, WIRE.Q_SORT);
+            acc = acc * wire(p, WIRE.Q_RANGE);
             acc = acc * domainSep;
             evals[6] = acc;
         }
@@ -562,7 +507,7 @@ contract EcdsaHonkVerifier is IVerifier {
             acc = acc * (delta_2 + minus_one);
             acc = acc * (delta_2 + minus_two);
             acc = acc * (delta_2 + minus_three);
-            acc = acc * wire(p, WIRE.Q_SORT);
+            acc = acc * wire(p, WIRE.Q_RANGE);
             acc = acc * domainSep;
             evals[7] = acc;
         }
@@ -573,7 +518,7 @@ contract EcdsaHonkVerifier is IVerifier {
             acc = acc * (delta_3 + minus_one);
             acc = acc * (delta_3 + minus_two);
             acc = acc * (delta_3 + minus_three);
-            acc = acc * wire(p, WIRE.Q_SORT);
+            acc = acc * wire(p, WIRE.Q_RANGE);
             acc = acc * domainSep;
             evals[8] = acc;
         }
@@ -584,7 +529,7 @@ contract EcdsaHonkVerifier is IVerifier {
             acc = acc * (delta_4 + minus_one);
             acc = acc * (delta_4 + minus_two);
             acc = acc * (delta_4 + minus_three);
-            acc = acc * wire(p, WIRE.Q_SORT);
+            acc = acc * wire(p, WIRE.Q_RANGE);
             acc = acc * domainSep;
             evals[9] = acc;
         }
@@ -606,7 +551,7 @@ contract EcdsaHonkVerifier is IVerifier {
         Fr[NUMBER_OF_ENTITIES] memory p,
         Fr[NUMBER_OF_SUBRELATIONS] memory evals,
         Fr domainSep
-    ) internal pure {
+    ) internal view {
         EllipticParams memory ep;
         ep.x_1 = wire(p, WIRE.W_R);
         ep.y_1 = wire(p, WIRE.W_O);
@@ -782,13 +727,13 @@ contract EcdsaHonkVerifier is IVerifier {
          *  * t: `timestamp` of memory cell being accessed (used for RAM, set to 0 for ROM)
          *  * v: `value` of memory cell being accessed
          *  * a: `access` type of record. read: 0 = read, 1 = write
-         *  * r: `record` of memory cell. record = access + index * eta + timestamp * eta^2 + value * eta^3
+         *  * r: `record` of memory cell. record = access + index * eta + timestamp * eta_two + value * eta_three
          *
          * A ROM memory record contains a tuple of the following fields:
          *  * i: `index` of memory cell being accessed
          *  * v: `value1` of memory cell being accessed (ROM tables can store up to 2 values per index)
          *  * v2:`value2` of memory cell being accessed (ROM tables can store up to 2 values per index)
-         *  * r: `record` of memory cell. record = index * eta + value2 * eta^2 + value1 * eta^3
+         *  * r: `record` of memory cell. record = index * eta + value2 * eta_two + value1 * eta_three
          *
          *  When performing a read/write access, the values of i, t, v, v2, a, r are stored in the following wires +
          * selectors, depending on whether the gate is a RAM read/write or a ROM read
@@ -811,15 +756,13 @@ contract EcdsaHonkVerifier is IVerifier {
          *
          * A ROM/ROM access gate can be evaluated with the identity:
          *
-         * qc + w1 \eta + w2 \eta^2 + w3 \eta^3 - w4 = 0
+         * qc + w1 \eta + w2 \eta_two + w3 \eta_three - w4 = 0
          *
          * For ROM gates, qc = 0
          */
-        ap.memory_record_check = wire(p, WIRE.W_O) * tp.eta;
-        ap.memory_record_check = ap.memory_record_check + wire(p, WIRE.W_R);
-        ap.memory_record_check = ap.memory_record_check * tp.eta;
-        ap.memory_record_check = ap.memory_record_check + wire(p, WIRE.W_L);
-        ap.memory_record_check = ap.memory_record_check * tp.eta;
+        ap.memory_record_check = wire(p, WIRE.W_O) * tp.etaThree;
+        ap.memory_record_check = ap.memory_record_check + (wire(p, WIRE.W_R) * tp.etaTwo);
+        ap.memory_record_check = ap.memory_record_check + (wire(p, WIRE.W_L) * tp.eta);
         ap.memory_record_check = ap.memory_record_check + wire(p, WIRE.Q_C);
         ap.partial_record_check = ap.memory_record_check; // used in RAM consistency check; deg 1 or 4
         ap.memory_record_check = ap.memory_record_check - wire(p, WIRE.W_4);
@@ -879,11 +822,9 @@ contract EcdsaHonkVerifier is IVerifier {
         // TODO(https://github.com/AztecProtocol/barretenberg/issues/757): If we sorted in
         // reverse order we could re-use `ap.partial_record_check`  1 -  ((w3' * eta + w2') * eta + w1') * eta
         // deg 1 or 4
-        ap.next_gate_access_type = wire(p, WIRE.W_O_SHIFT) * tp.eta;
-        ap.next_gate_access_type = ap.next_gate_access_type + wire(p, WIRE.W_R_SHIFT);
-        ap.next_gate_access_type = ap.next_gate_access_type * tp.eta;
-        ap.next_gate_access_type = ap.next_gate_access_type + wire(p, WIRE.W_L_SHIFT);
-        ap.next_gate_access_type = ap.next_gate_access_type * tp.eta;
+        ap.next_gate_access_type = wire(p, WIRE.W_O_SHIFT) * tp.etaThree;
+        ap.next_gate_access_type = ap.next_gate_access_type + (wire(p, WIRE.W_R_SHIFT) * tp.etaTwo);
+        ap.next_gate_access_type = ap.next_gate_access_type + (wire(p, WIRE.W_L_SHIFT) * tp.eta);
         ap.next_gate_access_type = wire(p, WIRE.W_4_SHIFT) - ap.next_gate_access_type;
 
         Fr value_delta = wire(p, WIRE.W_O_SHIFT) - wire(p, WIRE.W_O);
@@ -942,7 +883,7 @@ contract EcdsaHonkVerifier is IVerifier {
     function scaleAndBatchSubrelations(
         Fr[NUMBER_OF_SUBRELATIONS] memory evaluations,
         Fr[NUMBER_OF_ALPHAS] memory subrelationChallenges
-    ) internal pure returns (Fr accumulator) {
+    ) internal view returns (Fr accumulator) {
         accumulator = accumulator + evaluations[0];
 
         for (uint256 i = 1; i < NUMBER_OF_SUBRELATIONS; ++i) {
@@ -960,17 +901,7 @@ contract EcdsaHonkVerifier is IVerifier {
         Fr batchedScalar = Fr.wrap(1);
 
         // We linearly combine all evaluations (unshifted first, then shifted)
-
-        // TODO: Odd ordering is a workaround work out why cpp has odd ordering over entities
-        batchedEval = batchedEval + proof.sumcheckEvaluations[5] * batchedScalar;
-        batchedScalar = batchedScalar * tp.rho;
-
-        for (uint256 i = 0; i < 5; ++i) {
-            batchedEval = batchedEval + proof.sumcheckEvaluations[i] * batchedScalar;
-            batchedScalar = batchedScalar * tp.rho;
-        }
-
-        for (uint256 i = 6; i < NUMBER_OF_ENTITIES; ++i) {
+        for (uint256 i = 0; i < NUMBER_OF_ENTITIES; ++i) {
             batchedEval = batchedEval + proof.sumcheckEvaluations[i] * batchedScalar;
             batchedScalar = batchedScalar * tp.rho;
         }
@@ -1022,14 +953,13 @@ contract EcdsaHonkVerifier is IVerifier {
         Fr x_pow_2kp1;
     }
 
-    function computeCZetaX(
-        Honk.Proof memory proof,
-        Honk.VerificationKey memory vk,
-        Transcript memory tp,
-        Fr batchedEval
-    ) internal view returns (Honk.G1Point memory) {
-        Fr[NUMBER_OF_ENTITIES + LOG_N + 1] memory scalars;
-        Honk.G1Point[NUMBER_OF_ENTITIES + LOG_N + 1] memory commitments;
+    function computeCZetaX(Honk.Proof memory proof, Honk.VerificationKey memory vk, Transcript memory tp, Fr batchedEval)
+        internal
+        view
+        returns (Honk.G1Point memory)
+    {
+        Fr[NUMBER_OF_ENTITIES + CONST_PROOF_SIZE_LOG_N + 1] memory scalars;
+        Honk.G1Point[NUMBER_OF_ENTITIES + CONST_PROOF_SIZE_LOG_N + 1] memory commitments;
         CZetaXParams memory cp;
 
         // Phi_n(x) = (x^N - 1) / (x - 1)
@@ -1046,12 +976,12 @@ contract EcdsaHonkVerifier is IVerifier {
 
         // f commitments are accumulated at (zm_x * r)
         cp.rho_pow = Fr.wrap(1);
-        for (uint256 i = 1; i < 33; ++i) {
+        for (uint256 i = 1; i < 34; ++i) {
             scalars[i] = tp.zmX * cp.rho_pow;
             cp.rho_pow = cp.rho_pow * tp.rho;
         }
         // g commitments are accumulated at r
-        for (uint256 i = 33; i < 44; ++i) {
+        for (uint256 i = 34; i < 43; ++i) {
             scalars[i] = cp.rho_pow;
             cp.rho_pow = cp.rho_pow * tp.rho;
         }
@@ -1064,7 +994,7 @@ contract EcdsaHonkVerifier is IVerifier {
         commitments[5] = vk.qo;
         commitments[6] = vk.q4;
         commitments[7] = vk.qArith;
-        commitments[8] = vk.qSort;
+        commitments[8] = vk.qDeltaRange;
         commitments[9] = vk.qElliptic;
         commitments[10] = vk.qAux;
         commitments[11] = vk.qLookup;
@@ -1088,42 +1018,47 @@ contract EcdsaHonkVerifier is IVerifier {
         commitments[27] = convertProofPoint(proof.w2);
         commitments[28] = convertProofPoint(proof.w3);
         commitments[29] = convertProofPoint(proof.w4);
-        commitments[30] = convertProofPoint(proof.sortedAccum);
-        commitments[31] = convertProofPoint(proof.zPerm);
-        commitments[32] = convertProofPoint(proof.zLookup);
+        commitments[30] = convertProofPoint(proof.zPerm);
+        commitments[31] = convertProofPoint(proof.lookupInverses);
+        commitments[32] = convertProofPoint(proof.lookupReadCounts);
+        commitments[33] = convertProofPoint(proof.lookupReadTags);
 
         // to be Shifted
-        commitments[33] = vk.t1;
-        commitments[34] = vk.t2;
-        commitments[35] = vk.t3;
-        commitments[36] = vk.t4;
-        commitments[37] = convertProofPoint(proof.w1);
-        commitments[38] = convertProofPoint(proof.w2);
-        commitments[39] = convertProofPoint(proof.w3);
-        commitments[40] = convertProofPoint(proof.w4);
-        commitments[41] = convertProofPoint(proof.sortedAccum);
+        commitments[34] = vk.t1;
+        commitments[35] = vk.t2;
+        commitments[36] = vk.t3;
+        commitments[37] = vk.t4;
+        commitments[38] = convertProofPoint(proof.w1);
+        commitments[39] = convertProofPoint(proof.w2);
+        commitments[40] = convertProofPoint(proof.w3);
+        commitments[41] = convertProofPoint(proof.w4);
         commitments[42] = convertProofPoint(proof.zPerm);
-        commitments[43] = convertProofPoint(proof.zLookup);
 
         // Add scalar contributions
         // Add contributions: scalar * [q_k],  k = 0,...,log_N, where
         // scalar = -x * (x^{2^k} * \Phi_{n-k-1}(x^{2^{k+1}}) - u_k * \Phi_{n-k}(x^{2^k}))
         cp.x_pow_2k = tp.zmX;
         cp.x_pow_2kp1 = tp.zmX * tp.zmX;
-        for (uint256 k; k < LOG_N; ++k) {
-            cp.phi_1 = FrLib.div(cp.phi_numerator, cp.x_pow_2kp1 - Fr.wrap(1));
-            cp.phi_2 = FrLib.div(cp.phi_numerator, cp.x_pow_2k - Fr.wrap(1));
+        for (uint256 k; k < CONST_PROOF_SIZE_LOG_N; ++k) {
+            bool dummy_round = k >= LOG_N;
 
-            Fr scalar = cp.x_pow_2k * cp.phi_1;
-            scalar = scalar - (tp.sumCheckUChallenges[k] * cp.phi_2);
-            scalar = scalar * tp.zmX;
-            scalar = scalar * MINUS_ONE;
+            // note: defaults to 0
+            Fr scalar;
+            if (!dummy_round) {
+                cp.phi_1 = FrLib.div(cp.phi_numerator, cp.x_pow_2kp1 - Fr.wrap(1));
+                cp.phi_2 = FrLib.div(cp.phi_numerator, cp.x_pow_2k - Fr.wrap(1));
 
-            scalars[44 + k] = scalar;
-            commitments[44 + k] = convertProofPoint(proof.zmCqs[k]);
+                scalar = cp.x_pow_2k * cp.phi_1;
+                scalar = scalar - (tp.sumCheckUChallenges[k] * cp.phi_2);
+                scalar = scalar * tp.zmX;
+                scalar = scalar * MINUS_ONE;
 
-            cp.x_pow_2k = cp.x_pow_2kp1;
-            cp.x_pow_2kp1 = cp.x_pow_2kp1 * cp.x_pow_2kp1;
+                cp.x_pow_2k = cp.x_pow_2kp1;
+                cp.x_pow_2kp1 = cp.x_pow_2kp1 * cp.x_pow_2kp1;
+            }
+
+            scalars[43 + k] = scalar;
+            commitments[43 + k] = convertProofPoint(proof.zmCqs[k]);
         }
 
         return batchMul2(commitments, scalars);
@@ -1173,8 +1108,8 @@ contract EcdsaHonkVerifier is IVerifier {
 
     // This implementation is the same as above with different constants
     function batchMul2(
-        Honk.G1Point[NUMBER_OF_ENTITIES + LOG_N + 1] memory base,
-        Fr[NUMBER_OF_ENTITIES + LOG_N + 1] memory scalars
+        Honk.G1Point[NUMBER_OF_ENTITIES + CONST_PROOF_SIZE_LOG_N + 1] memory base,
+        Fr[NUMBER_OF_ENTITIES + CONST_PROOF_SIZE_LOG_N + 1] memory scalars
     ) internal view returns (Honk.G1Point memory result) {
         uint256 limit = NUMBER_OF_ENTITIES + LOG_N + 1;
         assembly {
@@ -1212,12 +1147,11 @@ contract EcdsaHonkVerifier is IVerifier {
         }
     }
 
-    function zkgReduceVerify(
-        Honk.Proof memory proof,
-        Transcript memory tp,
-        Fr evaluation,
-        Honk.G1Point memory commitment
-    ) internal view returns (bool) {
+    function zkgReduceVerify(Honk.Proof memory proof, Transcript memory tp, Fr evaluation, Honk.G1Point memory commitment)
+        internal
+        view
+        returns (bool)
+    {
         Honk.G1Point memory quotient_commitment = convertProofPoint(proof.zmPi);
         Honk.G1Point memory ONE = Honk.G1Point({x: 1, y: 2});
 
@@ -1252,10 +1186,11 @@ contract EcdsaHonkVerifier is IVerifier {
         );
 
         (bool success, bytes memory result) = address(0x08).staticcall(input);
-        return (abi.decode(result, (bool)) && success);
+        return abi.decode(result, (bool));
     }
 }
 
+// Conversion util - Duplicated as we cannot template LOG_N
 function convertPoints(Honk.G1ProofPoint[LOG_N + 1] memory commitments)
     pure
     returns (Honk.G1Point[LOG_N + 1] memory converted)
