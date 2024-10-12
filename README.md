@@ -2,7 +2,7 @@
 
 ## EVM Honk Verifier
 
-**An EVM verifier for the HONK (sumcheck + zeromorph) proving system.**
+**An EVM verifier for the HONK (sumcheck + shplemini) proving system.**
 
 This repo consists of:
 
